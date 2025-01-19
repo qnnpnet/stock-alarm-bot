@@ -1,41 +1,48 @@
-# 로거 생성 함수
-from logging.handlers import TimedRotatingFileHandler
 import logging
+from logging.handlers import RotatingFileHandler
 import os
 
 
-def setup_logger():
-    # 로그 디렉토리 생성
-    log_dir = "logs"
-    if not os.path.exists(log_dir):
-        os.makedirs(log_dir)
+def setup_logger(name: str = __name__) -> logging.Logger:
+    """
+    Create and configure a logger instance
 
-    # 로거 설정
-    logger = logging.getLogger(__name__)
-    logger.setLevel(logging.DEBUG)
+    Args:
+        name: Logger name (defaults to module name)
 
-    # 로그 포맷 설정
-    formatter = logging.Formatter(
-        "%(asctime)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+    Returns:
+        Configured logger instance
+    """
+    # Create logs directory if it doesn't exist
+    if not os.path.exists("logs"):
+        os.makedirs("logs")
+
+    # Create logger instance
+    logger = logging.getLogger(name)
+
+    # Skip if logger is already configured
+    if logger.handlers:
+        return logger
+
+    logger.setLevel(logging.INFO)
+
+    # Create formatters
+    file_formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
+    console_formatter = logging.Formatter("%(levelname)s: %(message)s")
 
-    # 파일 핸들러 설정 (매일 자정에 새로운 파일 생성)
-    file_handler = TimedRotatingFileHandler(
-        filename=os.path.join(log_dir, "stock_bot.log"),
-        when="midnight",
-        interval=1,
-        backupCount=7,
-        encoding="utf-8",
+    # Create and configure file handler
+    file_handler = RotatingFileHandler(
+        "logs/news_service.log", maxBytes=1024 * 1024, backupCount=5  # 1MB
     )
-    file_handler.setFormatter(formatter)
-    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(file_formatter)
 
-    # 콘솔 핸들러 설정
+    # Create and configure console handler
     console_handler = logging.StreamHandler()
-    console_handler.setFormatter(formatter)
-    console_handler.setLevel(logging.DEBUG)
+    console_handler.setFormatter(console_formatter)
 
-    # 핸들러 추가
+    # Add handlers to logger
     logger.addHandler(file_handler)
     logger.addHandler(console_handler)
 

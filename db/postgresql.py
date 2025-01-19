@@ -1,90 +1,131 @@
+import traceback
+from typing import List, Optional
 import psycopg2
+from psycopg2.extras import RealDictCursor
 from datetime import datetime
-
-from db.basedb import BaseDB
+from contextlib import contextmanager
+from .basedb import BaseDB
+from .models import Alert, WatchedKeyword
+from .exceptions import DatabaseError, DuplicateKeywordError
 
 
 class PostgreSQLDB(BaseDB):
-    def __init__(
-        self,
-        connection_config={
-            "host": "localhost",
-            "port": 5432,
-            "dbname": "stock_alert_bot",
-            "user": "postgres",
-            "password": "postgres",
-        },
-    ):
-        db_uri = f"postgresql://{connection_config['user']}:{connection_config['password']}@{connection_config['host']}:{connection_config['port']}/{connection_config['dbname']}"
-        self.conn = psycopg2.connect(db_uri)
-        self.cursor = self.conn.cursor()
+    def __init__(self, connection_config: dict):
+        """Initialize PostgreSQL database connection"""
+        try:
+            self.conn = psycopg2.connect(
+                **connection_config, cursor_factory=RealDictCursor
+            )
+        except psycopg2.Error as e:
+            raise ConnectionError(f"Failed to connect to PostgreSQL: {e}")
 
-    def setup_database(self):
-        self.create_watched_keywords_table()
-        self.create_alert_history_table()
+    @contextmanager
+    def transaction(self):
+        """Context manager for database transactions"""
+        cursor = self.conn.cursor()
+        try:
+            yield cursor
+            self.conn.commit()
+        except Exception as e:
+            self.conn.rollback()
+            traceback.print_exc()
+            raise DatabaseError(f"Transaction failed: {e}")
+        finally:
+            cursor.close()
 
-    def create_watched_keywords_table(self):
-        self.cursor.execute(
+    def setup_database(self) -> None:
+        with self.transaction() as cursor:
+            # Create watched keywords table
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS watched_keywords (
+                    keyword TEXT PRIMARY KEY,
+                    last_check TIMESTAMP NOT NULL
+                )
             """
-            CREATE TABLE IF NOT EXISTS watched_keywords
-            (keyword TEXT PRIMARY KEY, last_check TIMESTAMP)
-        """
-        )
-        self.conn.commit()
+            )
 
-    def create_alert_history_table(self):
-        self.cursor.execute(
+            # Create alert history table
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS alert_history (
+                    id SERIAL PRIMARY KEY,
+                    symbol TEXT NOT NULL,
+                    alert_type TEXT NOT NULL,
+                    price REAL NOT NULL,
+                    timestamp TIMESTAMP NOT NULL
+                )
             """
-            CREATE TABLE IF NOT EXISTS alert_history
-            (symbol TEXT, alert_type TEXT, price REAL, timestamp TIMESTAMP)
-        """
-        )
-        self.conn.commit()
+            )
 
-    def add_to_watched_keywords(self, keyword):
-        self.cursor.execute(
-            "INSERT INTO watched_keywords (keyword, last_check) VALUES (%s, %s)",
-            (keyword, datetime.now()),
-        )
-        self.conn.commit()
+            # Create index for alert history
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_alert_history_symbol_type
+                ON alert_history (symbol, alert_type)
+            """
+            )
 
-    def remove_from_watched_keywords(self, keyword):
-        self.cursor.execute(
-            "DELETE FROM watched_keywords WHERE keyword = %s", (keyword,)
-        )
-        self.conn.commit()
+    # PostgreSQL specific implementations follow the same pattern as SQLite
+    # but use %s instead of ? for parameter substitution
+    def add_alert(self, symbol: str, alert_type: str, price: float) -> None:
+        with self.transaction() as cursor:
+            cursor.execute(
+                """INSERT INTO alert_history (symbol, alert_type, price, timestamp)
+                   VALUES (%s, %s, %s, %s)""",
+                (symbol, alert_type, price, datetime.now()),
+            )
 
-    def get_stock_tickers_from_portfolio(self):
-        self.cursor.execute("SELECT distinct ticker FROM portfolio")
-        return self.cursor.fetchall()
+    def get_alerts(self) -> List[Alert]:
+        with self.transaction() as cursor:
+            cursor.execute("SELECT * FROM alert_history ORDER BY timestamp DESC")
+            return [Alert(**row) for row in cursor.fetchall()]
 
-    def get_keywords_from_watched_keywords(self):
-        self.cursor.execute("SELECT keyword, last_check FROM watched_keywords")
-        return self.cursor.fetchall()
+    def check_duplicate_alert(self, symbol: str) -> Optional[Alert]:
+        with self.transaction() as cursor:
+            cursor.execute(
+                """SELECT * FROM alert_history 
+                   WHERE symbol = %s
+                   AND timestamp > NOW() - INTERVAL '24 hours'
+                   LIMIT 1""",
+                (symbol,),
+            )
+            return bool(cursor.fetchone())
 
-    def exists_in_watched_keywords(self, keyword) -> bool:
-        self.cursor.execute(
-            "SELECT 1 FROM watched_keywords WHERE keyword = %s", (keyword,)
-        )
-        return bool(self.cursor.fetchone())
+    def get_watched_keywords(self) -> List[WatchedKeyword]:
+        with self.transaction() as cursor:
+            cursor.execute("SELECT * FROM watched_keywords")
+            return [WatchedKeyword(**row) for row in cursor.fetchall()]
 
-    def add_alert(self, symbol, alert_type, price):
-        self.cursor.execute(
-            "INSERT INTO alert_history (symbol, alert_type, price, timestamp) VALUES (%s, %s, %s, CURRENT_TIMESTAMP)",
-            (symbol, alert_type, price),
-        )
-        self.conn.commit()
+    def exists_in_watched_keywords(self, keyword: str) -> bool:
+        with self.transaction() as cursor:
+            cursor.execute(
+                "SELECT 1 FROM watched_keywords WHERE keyword = %s", (keyword,)
+            )
+            return bool(cursor.fetchone())
 
-    def get_alerts(self):
-        self.cursor.execute("SELECT * FROM alert_history")
-        return self.cursor.fetchall()
+    def add_to_watched_keywords(self, keyword: str) -> None:
+        if self.exists_in_watched_keywords(keyword):
+            raise DuplicateKeywordError(f"Keyword '{keyword}' already exists")
 
-    def find_duplicate(self, symbol, alert_type):
-        self.cursor.execute(
-            "SELECT * FROM alert_history WHERE symbol = %s AND alert_type = %s AND timestamp > CURRENT_TIMESTAMP - INTERVAL '10 hours'",
-            (symbol, alert_type),
-        )
-        return self.cursor.fetchone()
+        with self.transaction() as cursor:
+            cursor.execute(
+                """INSERT INTO watched_keywords (keyword, last_check)
+                   VALUES (%s, %s)""",
+                (keyword, datetime.now()),
+            )
 
-    def close(self):
-        self.conn.close()
+    def remove_from_watched_keywords(self, keyword: str) -> None:
+        with self.transaction() as cursor:
+            cursor.execute(
+                "DELETE FROM watched_keywords WHERE keyword = %s", (keyword,)
+            )
+
+    def get_symbols(self):
+        with self.transaction() as cursor:
+            cursor.execute("SELECT DISTINCT ticker FROM portfolio")
+            return [row["ticker"] for row in cursor.fetchall()]
+
+    def close(self) -> None:
+        if hasattr(self, "conn") and self.conn:
+            self.conn.close()

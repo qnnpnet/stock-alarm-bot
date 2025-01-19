@@ -1,46 +1,59 @@
-# db/basedb.py
+from abc import ABC, abstractmethod
+from typing import List, Optional, Tuple
+from datetime import datetime
+from .models import Alert, WatchedKeyword
+from .exceptions import DatabaseError, DuplicateKeywordError
 
 
-class BaseDB:
-    def __init__(self, connection_config):
-        self.connection_config = connection_config
+class BaseDB(ABC):
+    """Abstract base class for database implementations"""
 
-    def setup_database(self):
-        raise NotImplementedError("setup_database must be implemented")
+    @abstractmethod
+    def setup_database(self) -> None:
+        """Initialize database schema"""
+        pass
 
-    def create_watched_keywords_table(self):
-        raise NotImplementedError("create_watched_keywords_table must be implemented")
+    @abstractmethod
+    def add_alert(self, symbol: str, alert_type: str, price: float) -> None:
+        """Add a new alert to the database"""
+        pass
 
-    def create_alert_history_table(self):
-        raise NotImplementedError("create_alert_history_table must be implemented")
+    @abstractmethod
+    def get_alerts(self) -> List[Alert]:
+        """Retrieve all alerts"""
+        pass
 
-    def add_alert(self, keyword, alert_type, price):
-        raise NotImplementedError("add_alert must be implemented")
+    @abstractmethod
+    def check_duplicate_alert(self, symbol: str) -> Optional[Alert]:
+        """Find duplicate alerts within the last 24 hours"""
+        pass
 
-    def get_alerts(self):
-        raise NotImplementedError("get_alerts must be implemented")
+    @abstractmethod
+    def get_watched_keywords(self) -> List[WatchedKeyword]:
+        """Get all watched keywords"""
+        pass
 
-    def find_duplicate(self, keyword, alert_type):
-        raise NotImplementedError("find_duplicate must be implemented")
+    @abstractmethod
+    def exists_in_watched_keywords(self, keyword: str) -> bool:
+        """Check if a keyword exists in watched keywords"""
+        pass
 
-    def get_keywords_from_watched_keywords(self):
-        raise NotImplementedError(
-            "get_keywords_from_watched_keywords must be implemented"
-        )
+    @abstractmethod
+    def add_to_watched_keywords(self, keyword: str) -> None:
+        """Add a new keyword to watched keywords"""
+        pass
 
-    def get_stock_tickers_from_portfolio(self):
-        raise NotImplementedError(
-            "get_stock_tickers_from_portfolio must be implemented"
-        )
+    @abstractmethod
+    def remove_from_watched_keywords(self, keyword: str) -> None:
+        """Remove a keyword from watched keywords"""
+        pass
 
-    def exists_in_watched_keywords(self, keyword):
-        raise NotImplementedError("exists_in_watched_keywords must be implemented")
+    @abstractmethod
+    def get_symbols(self) -> List[str]:
+        """Get all symbols"""
+        pass
 
-    def add_to_watched_keywords(self, keyword):
-        raise NotImplementedError("add_to_watched_keywords must be implemented")
-
-    def remove_from_watched_keywords(self, keyword):
-        raise NotImplementedError("remove_from_watched_keywords must be implemented")
-
-    def close(self):
-        raise NotImplementedError("close must be implemented")
+    @abstractmethod
+    def close(self) -> None:
+        """Close database connection"""
+        pass

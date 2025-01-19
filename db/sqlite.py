@@ -1,76 +1,117 @@
+from typing import List, Optional
 import sqlite3
-from datetime import datetime
-
-from db.basedb import BaseDB
+from datetime import datetime, timedelta
+from contextlib import contextmanager
+from .basedb import BaseDB
+from .models import Alert, WatchedKeyword
+from .exceptions import DatabaseError, DuplicateKeywordError
 
 
 class SQLiteDB(BaseDB):
-    def __init__(self, db_name="watched_keywords.db"):
-        self.conn = sqlite3.connect(db_name)
-        self.cursor = self.conn.cursor()
+    def __init__(self, db_path: str):
+        """Initialize SQLite database connection"""
+        try:
+            self.db_path = db_path
+            self.conn = sqlite3.connect(db_path)
+            self.conn.row_factory = sqlite3.Row
+        except sqlite3.Error as e:
+            raise ConnectionError(f"Failed to connect to SQLite database: {e}")
 
-    def setup_database(self):
-        self.create_watched_keywords_table()
-        self.create_alert_history_table()
+    @contextmanager
+    def transaction(self):
+        """Context manager for database transactions"""
+        cursor = self.conn.cursor()
+        try:
+            yield cursor
+            self.conn.commit()
+        except Exception as e:
+            self.conn.rollback()
+            raise DatabaseError(f"Transaction failed: {e}")
+        finally:
+            cursor.close()
 
-    def create_watched_keywords_table(self):
-        self.cursor.execute(
+    def setup_database(self) -> None:
+        with self.transaction() as cursor:
+            # Create watched keywords table
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS watched_keywords (
+                    keyword TEXT PRIMARY KEY,
+                    last_check TIMESTAMP NOT NULL
+                )
             """
-            CREATE TABLE IF NOT EXISTS watched_keywords
-            (keyword TEXT PRIMARY KEY, last_check TIMESTAMP)
-        """
-        )
-        self.conn.commit()
+            )
 
-    def create_alert_history_table(self):
-        self.cursor.execute(
+            # Create alert history table
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS alert_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
+                    alert_type TEXT NOT NULL,
+                    price REAL NOT NULL,
+                    timestamp TIMESTAMP NOT NULL,
+                    INDEX idx_symbol_type (symbol, alert_type)
+                )
             """
-            CREATE TABLE IF NOT EXISTS alert_history
-            (symbol TEXT, alert_type TEXT, price REAL, timestamp TIMESTAMP)
-        """
-        )
-        self.conn.commit()
+            )
 
-    def add_to_watched_keywords(self, keyword):
-        self.cursor.execute(
-            "INSERT OR REPLACE INTO watched_keywords (keyword, last_check) VALUES (?, ?)",
-            (keyword, datetime.now()),
-        )
-        self.conn.commit()
+    def add_alert(self, symbol: str, alert_type: str, price: float) -> None:
+        with self.transaction() as cursor:
+            cursor.execute(
+                """INSERT INTO alert_history (symbol, alert_type, price, timestamp)
+                   VALUES (?, ?, ?, ?)""",
+                (symbol, alert_type, price, datetime.now()),
+            )
 
-    def remove_from_watched_keywords(self, keyword):
-        self.cursor.execute(
-            "DELETE FROM watched_keywords WHERE keyword = ?", (keyword,)
-        )
-        self.conn.commit()
+    def get_alerts(self) -> List[Alert]:
+        with self.transaction() as cursor:
+            cursor.execute("SELECT * FROM alert_history ORDER BY timestamp DESC")
+            return [Alert(**dict(row)) for row in cursor.fetchall()]
 
-    def get_keywords_from_watched_keywords(self):
-        self.cursor.execute("SELECT * FROM watched_keywords")
-        return self.cursor.fetchall()
+    def check_duplicate_alert(self, symbol: str) -> Optional[Alert]:
+        with self.transaction() as cursor:
+            cursor.execute(
+                """SELECT * FROM alert_history 
+                   WHERE symbol = ?
+                   AND timestamp > datetime('now', '-24 hours')
+                   LIMIT 1""",
+                (symbol,),
+            )
+            return bool(cursor.fetchone())
 
-    def exists_in_watched_keywords(self, keyword) -> bool:
-        self.cursor.execute(
-            "SELECT 1 FROM watched_keywords WHERE keyword = ?", (keyword,)
-        )
-        return bool(self.cursor.fetchone())
+    def get_watched_keywords(self) -> List[WatchedKeyword]:
+        with self.transaction() as cursor:
+            cursor.execute("SELECT * FROM watched_keywords")
+            return [WatchedKeyword(**dict(row)) for row in cursor.fetchall()]
 
-    def add_alert(self, symbol, alert_type, price):
-        self.cursor.execute(
-            "INSERT INTO alert_history (symbol, alert_type, price, timestamp) VALUES (?, ?, ?, datetime('now'))",
-            (symbol, alert_type, price),
-        )
-        self.conn.commit()
+    def exists_in_watched_keywords(self, keyword: str) -> bool:
+        with self.transaction() as cursor:
+            cursor.execute(
+                "SELECT 1 FROM watched_keywords WHERE keyword = ?", (keyword,)
+            )
+            return bool(cursor.fetchone())
 
-    def get_alerts(self):
-        self.cursor.execute("SELECT * FROM alert_history")
-        return self.cursor.fetchall()
+    def add_to_watched_keywords(self, keyword: str) -> None:
+        if self.exists_in_watched_keywords(keyword):
+            raise DuplicateKeywordError(f"Keyword '{keyword}' already exists")
 
-    def find_duplicate(self, symbol, alert_type):
-        self.cursor.execute(
-            "SELECT * FROM alert_history WHERE symbol = ? AND alert_type = ? AND timestamp > datetime('now', '-10 hours')",
-            (symbol, alert_type),
-        )
-        return self.cursor.fetchone()
+        with self.transaction() as cursor:
+            cursor.execute(
+                """INSERT INTO watched_keywords (keyword, last_check)
+                   VALUES (?, ?)""",
+                (keyword, datetime.now()),
+            )
 
-    def close(self):
-        self.conn.close()
+    def remove_from_watched_keywords(self, keyword: str) -> None:
+        with self.transaction() as cursor:
+            cursor.execute("DELETE FROM watched_keywords WHERE keyword = ?", (keyword,))
+
+    def get_symbols(self):
+        with self.transaction() as cursor:
+            cursor.execute("SELECT DISTINCT ticker FROM portfolio")
+            return [row["ticker"] for row in cursor.fetchall()]
+
+    def close(self) -> None:
+        if hasattr(self, "conn") and self.conn:
+            self.conn.close()
