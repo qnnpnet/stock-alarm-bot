@@ -8,6 +8,4 @@ yfinance==0.2.40
 pandas==2.1.4
 matplotlib==3.8.0
 numpy==1.26.4
-psycopg2-binary==2.9.10 is not installed or version cannot be determined
-# sqlite3 is not installed or version cannot be determined
-# logging is not installed or version cannot be determined
+psycopg2-binary==2.9.10
