@@ -1,0 +1,12 @@
+python
+pydantic
+playwright
+feedparser
+newspaper3k
+yfinance
+pandas
+matplotlib
+numpy
+psycopg2
+sqlite3
+logging
