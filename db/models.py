@@ -13,3 +13,8 @@ class Alert(BaseModel):
 class WatchedKeyword(BaseModel):
     keyword: str
     last_check: datetime
+
+
+class Portfolio(BaseModel):
+    ticker: str
+    quantity: int

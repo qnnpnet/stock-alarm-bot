@@ -23,10 +23,11 @@ class StockAlertBot:
         self.logger.info(f"New user started the bot (Chat ID: {chat_id})")
 
         await update.message.reply_text(
-            "Stock Alert Bot Started!\n"
-            "/add <keyword> - Add watchlist keyword\n"
-            "/remove <keyword> - Remove watchlist keyword\n"
-            "/list - View watchlist"
+            "Stock Alarm Bot Started!\n"
+            "/add <keyword> - Add keyword to watchlist\n"
+            "/remove <keyword> - Remove keyword from watchlist\n"
+            "/keywords - View keywords\n"
+            "/portfolio - View your portfolio\n"
         )
 
     async def add_keyword(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -133,13 +134,13 @@ class StockAlertBot:
     async def get_portfolio(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Get the current portfolio"""
         try:
-            portfolio = self.db.get_symbols()
+            portfolio_list = self.db.get_symbols()
             # Create a formatted message with stock data for each keyword
             message = "📊 Your Portfolio:\n\n"
             # show the symbols in the portfolio with /chart <symbol> command
-            for symbol in portfolio:
-                message += f"- {symbol}\n"
-            message += f"\nTotal: {len(portfolio)} items"
+            for portfolio in portfolio_list:
+                message += f"- {portfolio.ticker} ({portfolio.quantity} shares)\n"
+            message += f"\nTotal: {len(portfolio_list)} items"
             await update.message.reply_text(message.strip())
             self.logger.info("Portfolio displayed successfully")
         except Exception as e:
@@ -153,9 +154,9 @@ class StockAlertBot:
             return
 
         try:
-            stocks = self.db.get_symbols()
-            for symbol in stocks:
-                await self._process_stock_alert(context, symbol, chat_id)
+            portfolio_list = self.db.get_symbols()
+            for portfolio in portfolio_list:
+                await self._process_stock_alert(context, portfolio.ticker, chat_id)
         except Exception as e:
             self.logger.error(f"Error checking alerts: {str(e)}")
 

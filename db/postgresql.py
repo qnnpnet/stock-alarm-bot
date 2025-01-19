@@ -5,7 +5,7 @@ from psycopg2.extras import RealDictCursor
 from datetime import datetime
 from contextlib import contextmanager
 from .basedb import BaseDB
-from .models import Alert, WatchedKeyword
+from .models import Alert, WatchedKeyword, Portfolio
 from .exceptions import DatabaseError, DuplicateKeywordError
 
 
@@ -121,10 +121,12 @@ class PostgreSQLDB(BaseDB):
                 "DELETE FROM watched_keywords WHERE keyword = %s", (keyword,)
             )
 
-    def get_symbols(self):
+    def get_symbols(self) -> List[Portfolio]:
         with self.transaction() as cursor:
-            cursor.execute("SELECT DISTINCT ticker FROM portfolio")
-            return [row["ticker"] for row in cursor.fetchall()]
+            cursor.execute(
+                "SELECT ticker, SUM(quantity) AS quantity FROM portfolio GROUP BY ticker ORDER BY ticker"
+            )
+            return [Portfolio(**row) for row in cursor.fetchall()]
 
     def close(self) -> None:
         if hasattr(self, "conn") and self.conn:

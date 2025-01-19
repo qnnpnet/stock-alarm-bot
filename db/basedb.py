@@ -1,8 +1,6 @@
 from abc import ABC, abstractmethod
-from typing import List, Optional, Tuple
-from datetime import datetime
-from .models import Alert, WatchedKeyword
-from .exceptions import DatabaseError, DuplicateKeywordError
+from typing import List, Optional
+from .models import Alert, WatchedKeyword, Portfolio
 
 
 class BaseDB(ABC):
@@ -49,7 +47,7 @@ class BaseDB(ABC):
         pass
 
     @abstractmethod
-    def get_symbols(self) -> List[str]:
+    def get_symbols(self) -> List[Portfolio]:
         """Get all symbols"""
         pass
 
